@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Player YouTube Personalizado</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      text-align: center;
+      transition: background 0.3s, color 0.3s;
+      background-color: #f4f4f4;
+      color: #111;
+    }
+
+    body.tema-claro {
+      background-color: #f4f4f4;
+      color: #111;
+    }
+
+    body.tema-escuro {
+      background-color: #111;
+      color: #eee;
+    }
+
+    input, button {
+      font-size: 1rem;
+      padding: 10px;
+      border: none;
+      border-radius: 5px;
+      margin: 10px 5px;
+      cursor: pointer;
+      transition: background 0.3s, color 0.3s;
+    }
+
+    input {
+      width: 60%;
+      max-width: 500px;
+    }
+
+    button {
+      background-color: #779ef3;
+      color: white;
+    }
+
+    button:hover {
+      background-color: #1c4ebb;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 90%;
+      max-width: 960px;
+      margin: 20px auto;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    }
+
+    body.tema-escuro .video-wrapper {
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+    }
+
+#player {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+
+    .controls {
+      margin: 10px 0;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .controls button {
+      font-size: 1.2rem;
+      padding: 8px 12px;
+    }
+
+    /* Barra de progresso */
+    .progress-container {
+      width: 90%;
+      max-width: 960px;
+      height: 8px;
+      background: #ddd;
+      border-radius: 4px;
+      margin: 10px auto;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+
+    body.tema-escuro .progress-container {
+      background: #333;
+    }
+
+    .progress {
+      height: 100%;
+      background: #779ef3;
+      width: 0%;
+      transition: width 0.2s ease;
+    }
+
+    /* Tempo */
+    .tempo {
+      font-size: 0.9rem;
+      margin: 5px 0 15px 0;
+      user-select: none;
+    }
+
+    /* Controle de volume */
+    .volume-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 15px;
+    }
+
+    .volume-control input[type="range"] {
+      width: 100px;
+      cursor: pointer;
+    }
+
+    /* Ícone volume */
+    .volume-icon {
+      font-size: 1.4rem;
+      user-select: none;
+    }
+
+  </style>
+</head>
+<body>
+  <input type="text" id="url" placeholder="URL do vídeo ou playlist do YouTube" />
+  <button onclick="carregarVideo()" title="Buscar vídeo">🔍</button>
+
+  <div class="video-wrapper">
+    <div id="player"></div>
+  </div>
+
+  <div class="controls" style="justify-content:center;">
+    <button onclick="anterior()" title="Previous">⏮️</button>
+    <button onclick="playPause()" title="Play/Pause">⏯️</button>
+    <button onclick="proximo()" title="Next">⏭️</button>
+    <button onclick="alterarVelocidade()" title="Change speed">⏩</button>
+    <button onclick="telaCheia()" title="Fullscreen">🔳</button>
+    <button onclick="alternarTema()" title="Switch theme" id="temaBtn">🌓</button>
+
+    <div class="volume-control" title="Volume">
+      <span class="volume-icon" id="volumeIcon">🔊</span>
+      <input type="range" id="volumeSlider" min="0" max="100" value="100" />
+    </div>
+  </div>
+
+  <div class="progress-container" id="progressContainer" title="Barra de progresso"></div>
+  <div class="tempo" id="tempo">00:00 / 00:00</div>
+
+  <!-- Load YouTube IFrame API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+
+  <script>
+    let player;
+    let videoId = "";
+    let playlistId = "";
+    let playState = true;
+    let velocidade = 1;
+    let temaAtual = localStorage.getItem("preferencia-tema") || "auto";
+
+    // Formatar segundos para 00:00:00
+    function formatarTempo(segundos) {
+      const h = Math.floor(segundos / 3600);
+      const m = Math.floor((segundos % 3600) / 60);
+      const s = Math.floor(segundos % 60);
+      return (h > 0 ? String(h).padStart(2,'0') + ':' : '') +
+             String(m).padStart(2,'0') + ':' +
+             String(s).padStart(2,'0');
+    }
+
+    // Extrai ids de vídeo e playlist
+    function extrairIds(url) {
+      const videoMatch = url.match(/[?&]v=([^&]+)/);
+      const playlistMatch = url.match(/[?&]list=([^&]+)/);
+      return {
+        video: videoMatch ? videoMatch[1] : "",
+        playlist: playlistMatch ? playlistMatch[1] : ""
+      };
+    }
+
+    // Função chamada pelo YouTube API quando estiver pronto
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: '',
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          enablejsapi: 1,
+          modestbranding: 1,
+          rel: 0,
+          showinfo: 0,
+          iv_load_policy: 3
+        },
+        events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange
+        }
+      });
+    }
+
+    function carregarVideo() {
+      const url = document.getElementById("url").value;
+      const ids = extrairIds(url);
+      videoId = ids.video;
+      playlistId = ids.playlist;
+
+      if (playlistId) {
+        player.loadPlaylist({
+          listType: 'playlist',
+          list: playlistId,
+          index: 0,
+          suggestedQuality: 'large'
+        });
+      } else if (videoId) {
+        player.loadVideoById(videoId);
+      } else {
+        alert("URL inválida.");
+        return;
+      }
+
+      velocidade = 1;
+      player.setPlaybackRate(velocidade);
+      document.getElementById('volumeSlider').value = player.getVolume();
+      playState = true;
+    }
+
+    function onPlayerReady(event) {
+      atualizarBarraTempo();
+    }
+
+    function onPlayerStateChange(event) {
+      atualizarBarraTempo();
+
+      // Atualiza playState conforme o estado do player
+      if(event.data == YT.PlayerState.PLAYING) {
+        playState = true;
+      } else if(event.data == YT.PlayerState.PAUSED || event.data == YT.PlayerState.ENDED) {
+        playState = false;
+      }
+    }
+
+    // Play/Pause toggle
+    function playPause() {
+      if (!player) return;
+      if (playState) {
+        player.pauseVideo();
+      } else {
+        player.playVideo();
+      }
+    }
+
+    // Próximo vídeo
+    function proximo() {
+      if (!player) return;
+      player.nextVideo();
+    }
+
+    // Vídeo anterior
+    function anterior() {
+      if (!player) return;
+      player.previousVideo();
+    }
+
+    // Alterar velocidade do vídeo (0.5x, 1x, 1.5x, 2x)
+    function alterarVelocidade() {
+      if (!player) return;
+      const speeds = [0.5, 1, 1.5, 2];
+      let idx = speeds.indexOf(velocidade);
+      idx = (idx + 1) % speeds.length;
+      velocidade = speeds[idx];
+      player.setPlaybackRate(velocidade);
+      alert("Velocidade: " + velocidade + "x");
+    }
+
+    // Tela cheia
+    function telaCheia() {
+      const elem = document.querySelector('.video-wrapper');
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen();
+      } else if (elem.webkitRequestFullscreen) {
+        elem.webkitRequestFullscreen();
+      } else if (elem.msRequestFullscreen) {
+        elem.msRequestFullscreen();
+      }
+    }
+
+    // Atualizar barra e tempo
+    function atualizarBarraTempo() {
+      if (!player || player.getDuration() === 0) {
+        document.getElementById("tempo").textContent = "00:00 / 00:00";
+        document.querySelector(".progress").style.width = "0%";
+        return;
+      }
+
+      const current = player.getCurrentTime();
+      const total = player.getDuration();
+
+      const progresso = (current / total) * 100;
+      document.getElementById("tempo").textContent = `${formatarTempo(current)} / ${formatarTempo(total)}`;
+      document.querySelector(".progress").style.width = `${progresso}%`;
+
+      // Atualiza a cada 500ms
+      setTimeout(atualizarBarraTempo, 500);
+    }
+
+    // Barra de progresso clicável
+    const progressContainer = document.getElementById("progressContainer");
+    // Criar barra de progresso interna
+    const barra = document.createElement("div");
+    barra.className = "progress";
+    progressContainer.appendChild(barra);
+
+    progressContainer.addEventListener("click", e => {
+      if (!player) return;
+      const rect = progressContainer.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const width = rect.width;
+      const perc = clickX / width;
+      const seekTo = perc * player.getDuration();
+      player.seekTo(seekTo, true);
+    });
+
+    // Volume
+    const volumeSlider = document.getElementById("volumeSlider");
+    const volumeIcon = document.getElementById("volumeIcon");
+
+    volumeSlider.addEventListener("input", e => {
+      if (!player) return;
+      const vol = e.target.value;
+      player.setVolume(vol);
+      atualizarIconeVolume(vol);
+    });
+
+    function atualizarIconeVolume(volume) {
+      if (volume == 0) volumeIcon.textContent = "🔇";
+      else if (volume <= 30) volumeIcon.textContent = "🔈";
+      else if (volume <= 70) volumeIcon.textContent = "🔉";
+      else volumeIcon.textContent = "🔊";
+    }
+
+    // Inicializa volume no máximo
+    function inicializarVolume() {
+      if (!player) return;
+      let vol = player.getVolume();
+      if (vol === 0) vol = 100;
+      volumeSlider.value = vol;
+      atualizarIconeVolume(vol);
+    }
+
+    // Tema claro/escuro
+    function alternarTema() {
+      if (temaAtual === "claro") {
+        temaAtual = "escuro";
+      } else {
+        temaAtual = "claro";
+      }
+      aplicarTema();
+    }
+
+    function aplicarTema() {
+      if (temaAtual === "claro") {
+        document.body.classList.remove("tema-escuro");
+        document.body.classList.add("tema-claro");
+        document.getElementById("temaBtn").textContent = "🌙";
+      } else if (temaAtual === "escuro") {
+        document.body.classList.remove("tema-claro");
+        document.body.classList.add("tema-escuro");
+        document.getElementById("temaBtn").textContent = "☀️";
+      }
+      localStorage.setItem("preferencia-tema", temaAtual);
+    }
+
+    // Define tema no carregamento
+    function definirTemaInicial() {
+      if (temaAtual === "auto") {
+        // Detectar preferencia do sistema
+        if(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          temaAtual = "escuro";
+        } else {
+          temaAtual = "claro";
+        }
+      }
+      aplicarTema();
+    }
+
+    // Enter no input dispara busca
+    document.getElementById("url").addEventListener("keypress", e => {
+      if (e.key === "Enter") {
+        carregarVideo();
+      }
+    });
+	// Atalhos de teclado para o player
+	document.addEventListener('keydown', (e) => {
+	  if (!player) return;
+
+	  // Ignorar se o foco estiver em input, textarea, ou contenteditable
+	  const tag = document.activeElement.tagName.toLowerCase();
+	  if (tag === 'input' || tag === 'textarea' || document.activeElement.isContentEditable) {
+		return;
+	  }
+
+	  switch(e.key) {
+		case 'ArrowRight':
+		  // Avança 10 segundos
+		  const novoTempoAvanco = Math.min(player.getCurrentTime() + 10, player.getDuration());
+		  player.seekTo(novoTempoAvanco, true);
+		  e.preventDefault();
+		  break;
+		case 'ArrowLeft':
+		  // Volta 10 segundos
+		  const novoTempoVolta = Math.max(player.getCurrentTime() - 10, 0);
+		  player.seekTo(novoTempoVolta, true);
+		  e.preventDefault();
+		  break;
+		case ' ':
+		  // Espaço: play/pause
+		  playPause();
+		  e.preventDefault();
+		  break;
+		case 'f':
+		case 'F':
+		  // Tela cheia
+		  telaCheia();
+		  e.preventDefault();
+		  break;
+	  }
+	});
+	function pegarParametroUrl(nome) {
+	  const params = new URLSearchParams(window.location.search);
+	  return params.get(nome);
+	}
+
+    // Inicializa tema e volume
+    window.onload = () => {
+	  // Pega URL do parâmetro "url"
+	  const urlParam = pegarParametroUrl('url');
+	  if (urlParam) {
+		document.getElementById('url').value = urlParam;
+		carregarVideo();
+	  }
+      definirTemaInicial();
+      inicializarVolume();
+    };
+  </script>
+</body>
+</html>
